@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSDL PAN Resizer Utility</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    colors: {
+                        zinc: {
+                            850: '#202024',
+                            900: '#18181b',
+                            950: '#09090b',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body { 
+            background-color: #09090b; 
+            color: #e4e4e7;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+        
+        .glass-panel {
+            background: rgba(24, 24, 27, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.5);
+        }
+
+        .paste-zone { outline: none; transition: all 0.2s ease; cursor: pointer; }
+        .drop-area {
+            border: 2px dashed rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.02);
+            transition: all 0.2s ease;
+        }
+        .paste-zone:hover .drop-area {
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .paste-zone:focus .drop-area { 
+            border-color: #3b82f6; 
+            background: rgba(59, 130, 246, 0.05);
+            box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2);
+        }
+
+        .cropper-container-box { 
+            width: 100%; 
+            max-height: 600px; /* Made even taller since it has full screen width now */
+            background-color: #ffffff; 
+            border-radius: 0.5rem; 
+            overflow: hidden; 
+        }
+        .cropper-view-box, .cropper-face { border-radius: 0; }
+        .cropper-modal { background-color: rgba(0, 0, 0, 0.85); }
+        .cropper-container-box:not(.hidden) ~ .empty-state { display: none; }
+        
+        /* Tab Transition */
+        .tab-content {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex flex-col items-center">
+
+    <div class="w-full max-w-4xl mx-auto">
+        <header class="mb-8 flex flex-col items-center justify-center space-y-2 text-center">
+            <h1 class="text-3xl font-bold text-white tracking-tight flex items-center">
+                <i class="fa-solid fa-id-card mr-3 text-blue-500"></i> NSDL Resizer
+            </h1>
+            <p class="text-zinc-400 text-sm font-medium">Select an element to process. Focus a zone to <kbd class="px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono text-xs">Ctrl+V</kbd> paste.</p>
+        </header>
+
+        <div class="flex justify-center mb-8">
+            <div class="bg-zinc-900/80 p-1.5 rounded-xl border border-zinc-800/80 flex space-x-1 shadow-lg backdrop-blur-md">
+                <button id="photoTab" onclick="switchTab('photo')" class="tab-btn active px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 bg-zinc-800 text-white shadow-md flex items-center">
+                    <i class="fa-solid fa-camera mr-2 text-blue-400"></i> Photograph
+                </button>
+                <button id="signTab" onclick="switchTab('sign')" class="tab-btn px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-zinc-400 hover:text-zinc-200 flex items-center">
+                    <i class="fa-solid fa-signature mr-2 text-purple-400"></i> Signature
+                </button>
+                <button id="docTab" onclick="switchTab('doc')" class="tab-btn px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-zinc-400 hover:text-zinc-200 flex items-center">
+                    <i class="fa-regular fa-file-pdf mr-2 text-rose-400"></i> Aadhaar PDF
+                </button>
+            </div>
+        </div>
+
+        <div class="w-full">
+            
+            <div id="photoContent" class="tab-content block w-full h-full">
+                <div id="photoZone" tabindex="0" class="paste-zone glass-panel rounded-2xl p-6 flex flex-col relative group h-[70vh] max-h-[800px]">
+                    <div class="flex items-center justify-between mb-4 pointer-events-none">
+                        <div class="flex items-center gap-3">
+                            <h2 class="text-lg font-semibold text-white">Photograph</h2>
+                        </div>
+                        <span class="text-xs font-mono bg-zinc-800/80 text-zinc-400 px-2.5 py-1 rounded-md border border-zinc-700/50">213x213px | &lt;50KB</span>
+                    </div>
+                    
+                    <input type="file" id="photoInput" accept="image/*" class="hidden">
+                    
+                    <div class="drop-area relative flex-grow rounded-xl flex items-center justify-center mb-5 overflow-hidden">
+                        <div class="cropper-container-box hidden h-full" id="photoCropperBox">
+                            <img id="photoImage" class="max-w-full block">
+                        </div>
+                        <div class="empty-state absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none">
+                            <i class="fa-regular fa-image text-4xl mb-3 opacity-50"></i>
+                            <span class="text-sm font-medium">Click or Paste Image</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-auto flex gap-3 shrink-0">
+                        <button id="removePhoto" class="hidden bg-zinc-800 hover:bg-zinc-700 text-red-400 font-medium w-12 rounded-xl transition-colors border border-zinc-700" title="Remove Image">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                        <button id="downloadPhoto" class="flex-grow bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 px-4 rounded-xl transition-all shadow-lg shadow-blue-900/20 disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed" disabled>
+                            <i class="fa-solid fa-download mr-2"></i>Download Photo
+                        </button>
+                    </div>
+                    <p id="photoStatus" class="text-xs text-center mt-3 text-emerald-400 hidden pointer-events-none font-medium"></p>
+                </div>
+            </div>
+
+            <div id="signContent" class="tab-content hidden w-full h-full">
+                <div id="signZone" tabindex="0" class="paste-zone glass-panel rounded-2xl p-6 flex flex-col relative group h-[70vh] max-h-[800px]">
+                    <div class="flex items-center justify-between mb-4 pointer-events-none">
+                        <div class="flex items-center gap-3">
+                            <h2 class="text-lg font-semibold text-white">Signature</h2>
+                        </div>
+                        <span class="text-xs font-mono bg-zinc-800/80 text-zinc-400 px-2.5 py-1 rounded-md border border-zinc-700/50">4.5x2cm | &lt;50KB</span>
+                    </div>
+                    
+                    <input type="file" id="signInput" accept="image/*" class="hidden">
+                    
+                    <div class="drop-area relative flex-grow rounded-xl flex items-center justify-center mb-5 overflow-hidden">
+                        <div class="cropper-container-box hidden h-full" id="signCropperBox">
+                            <img id="signImage" class="max-w-full block">
+                        </div>
+                        <div class="empty-state absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none">
+                            <i class="fa-solid fa-pen-nib text-4xl mb-3 opacity-50"></i>
+                            <span class="text-sm font-medium">Click or Paste Signature</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-auto flex gap-3 shrink-0">
+                        <button id="removeSign" class="hidden bg-zinc-800 hover:bg-zinc-700 text-red-400 font-medium w-12 rounded-xl transition-colors border border-zinc-700" title="Remove Image">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                        <button id="downloadSign" class="flex-grow bg-purple-600 hover:bg-purple-500 text-white font-medium py-3 px-4 rounded-xl transition-all shadow-lg shadow-purple-900/20 disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed" disabled>
+                            <i class="fa-solid fa-download mr-2"></i>Download Signature
+                        </button>
+                    </div>
+                    <p id="signStatus" class="text-xs text-center mt-3 text-emerald-400 hidden pointer-events-none font-medium"></p>
+                </div>
+            </div>
+
+            <div id="docContent" class="tab-content hidden w-full h-full">
+                <div class="glass-panel rounded-2xl p-6 flex flex-col h-[70vh] max-h-[800px]">
+                    <div class="flex items-center justify-between mb-4 pointer-events-none">
+                        <div class="flex items-center gap-3">
+                            <div>
+                                <h2 class="text-lg font-semibold text-white">Aadhaar Document</h2>
+                                <p class="text-xs text-zinc-500 mt-0.5">Crop ratio: 3.5 x 2.2 in</p>
+                            </div>
+                        </div>
+                        <span class="text-xs font-mono bg-zinc-800/80 text-zinc-400 px-2.5 py-1 rounded-md border border-zinc-700/50">PDF | &lt;300KB</span>
+                    </div>
+                    
+                    <div class="flex-grow flex gap-4 min-h-0">
+                        <div id="docFrontZone" tabindex="0" class="paste-zone flex-1 flex flex-col relative group h-full">
+                            <label class="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider pointer-events-none">Front Side</label>
+                            <input type="file" id="docFrontInput" accept="image/*" class="hidden">
+                            
+                            <div class="drop-area relative flex-grow rounded-xl flex items-center justify-center overflow-hidden">
+                                <div class="cropper-container-box hidden w-full h-full relative" id="docFrontCropperBox">
+                                    <img id="docFrontImage" class="max-w-full block">
+                                    <button id="removeDocFront" class="absolute top-3 right-3 z-10 bg-zinc-900/90 hover:bg-red-600 text-zinc-300 hover:text-white w-8 h-8 rounded-lg shadow-lg border border-zinc-700 hover:border-red-500 transition-all flex items-center justify-center" title="Remove Front Side">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
+                                <div class="empty-state absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none">
+                                    <i class="fa-regular fa-id-card text-3xl mb-3 opacity-50"></i>
+                                    <span class="text-sm font-medium">Front Side</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="docBackZone" tabindex="0" class="paste-zone flex-1 flex flex-col relative group h-full">
+                            <label class="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider pointer-events-none flex justify-between">
+                                <span>Back Side <span class="text-zinc-600 normal-case ml-1">(Optional)</span></span>
+                            </label>
+                            <input type="file" id="docBackInput" accept="image/*" class="hidden">
+                            
+                            <div class="drop-area relative flex-grow rounded-xl flex items-center justify-center overflow-hidden">
+                                <div class="cropper-container-box hidden w-full h-full relative" id="docBackCropperBox">
+                                    <img id="docBackImage" class="max-w-full block">
+                                    <button id="removeDocBack" class="absolute top-3 right-3 z-10 bg-zinc-900/90 hover:bg-red-600 text-zinc-300 hover:text-white w-8 h-8 rounded-lg shadow-lg border border-zinc-700 hover:border-red-500 transition-all flex items-center justify-center" title="Remove Back Side">
+                                        <i class="fa-solid fa-xmark"></i>
+                                    </button>
+                                </div>
+                                <div class="empty-state absolute inset-0 flex flex-col items-center justify-center text-zinc-500 pointer-events-none">
+                                    <i class="fa-regular fa-address-card text-3xl mb-3 opacity-50"></i>
+                                    <span class="text-sm font-medium">Back Side</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-5 pt-5 border-t border-zinc-800/50 shrink-0">
+                        <button id="downloadDoc" class="w-full bg-rose-600 hover:bg-rose-500 text-white font-medium py-3 px-4 rounded-xl transition-all shadow-lg shadow-rose-900/20 disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed" disabled>
+                            <i class="fa-solid fa-file-export mr-2"></i>Generate Single PDF
+                        </button>
+                        <p id="docStatus" class="text-xs text-center mt-3 text-emerald-400 hidden pointer-events-none font-medium"></p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <script>
+        // --- TAB LOGIC ---
+        function switchTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.add('hidden');
+                el.classList.remove('block');
+            });
+            
+            // Reset all tab buttons styling
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-zinc-800', 'text-white', 'shadow-md');
+                el.classList.add('text-zinc-400', 'hover:text-zinc-200');
+            });
+            
+            // Show target tab content
+            document.getElementById(tabId + 'Content').classList.remove('hidden');
+            document.getElementById(tabId + 'Content').classList.add('block');
+            
+            // Style active tab button
+            const activeBtn = document.getElementById(tabId + 'Tab');
+            activeBtn.classList.remove('text-zinc-400', 'hover:text-zinc-200');
+            activeBtn.classList.add('bg-zinc-800', 'text-white', 'shadow-md');
+            
+            // Update Cropper instances if they exist (fixes canvas rendering glitch on hidden tabs)
+            setTimeout(() => {
+                if (tabId === 'photo' && croppers.photo) croppers.photo.resize();
+                if (tabId === 'sign' && croppers.sign) croppers.sign.resize();
+                if (tabId === 'doc') {
+                    if (croppers.docFront) croppers.docFront.resize();
+                    if (croppers.docBack) croppers.docBack.resize();
+                }
+            }, 10);
+        }
+
+        // --- CROPPER LOGIC ---
+        const croppers = { photo: null, sign: null, docFront: null, docBack: null };
+
+        // OPTIMIZED HELPER: Scale down massive images before padding to fix lag
+        function padImageWithWhitespace(imgSrc, callback) {
+            const img = new Image();
+            img.onload = () => {
+                // Determine max size to prevent browser lag (1200px is plenty for PAN uploads)
+                const MAX_DIMENSION = 1200; 
+                let sourceWidth = img.width;
+                let sourceHeight = img.height;
+
+                if (sourceWidth > MAX_DIMENSION || sourceHeight > MAX_DIMENSION) {
+                    const ratio = Math.min(MAX_DIMENSION / sourceWidth, MAX_DIMENSION / sourceHeight);
+                    sourceWidth = sourceWidth * ratio;
+                    sourceHeight = sourceHeight * ratio;
+                }
+
+                const canvas = document.createElement('canvas');
+                // Create padding based on the scaled-down size, not the massive original
+                canvas.width = sourceWidth * 2;
+                canvas.height = sourceHeight * 2;
+                
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                const x = (canvas.width - sourceWidth) / 2;
+                const y = (canvas.height - sourceHeight) / 2;
+                
+                // Draw image scaled down
+                ctx.drawImage(img, 0, 0, img.width, img.height, x, y, sourceWidth, sourceHeight);
+                
+                callback(canvas.toDataURL('image/jpeg', 0.95));
+            };
+            img.src = imgSrc;
+        }
+
+        function initCropper(inputId, imageId, boxId, type, aspectRatio, removeBtnId) {
+            const input = document.getElementById(inputId);
+            const image = document.getElementById(imageId);
+            const box = document.getElementById(boxId);
+            const removeBtn = document.getElementById(removeBtnId);
+
+            input.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    padImageWithWhitespace(event.target.result, (paddedDataUrl) => {
+                        image.src = paddedDataUrl;
+                        box.classList.remove('hidden');
+                        if(removeBtn) removeBtn.classList.remove('hidden');
+
+                        if (croppers[type]) croppers[type].destroy();
+
+                        croppers[type] = new Cropper(image, {
+                            aspectRatio: aspectRatio,
+                            viewMode: 1,
+                            autoCropArea: 0.8,
+                            background: true
+                        });
+
+                        checkDownloadButtons(type);
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function checkDownloadButtons(type) {
+            if(type === 'photo') document.getElementById('downloadPhoto').disabled = false;
+            if(type === 'sign') document.getElementById('downloadSign').disabled = false;
+            if(type === 'docFront' || type === 'docBack') document.getElementById('downloadDoc').disabled = false;
+        }
+
+        function setupRemoveButton(btnId, type, boxId, inputId, statusId) {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (croppers[type]) {
+                    croppers[type].destroy();
+                    croppers[type] = null;
+                }
+                
+                document.getElementById(boxId).classList.add('hidden');
+                document.getElementById(inputId).value = '';
+                if(statusId) document.getElementById(statusId).classList.add('hidden');
+                
+                if (type === 'photo' || type === 'sign') btn.classList.add('hidden');
+                
+                if (type === 'photo') document.getElementById('downloadPhoto').disabled = true;
+                if (type === 'sign') document.getElementById('downloadSign').disabled = true;
+                if (type === 'docFront' || type === 'docBack') {
+                    if (!croppers.docFront && !croppers.docBack) document.getElementById('downloadDoc').disabled = true;
+                }
+            });
+        }
+
+        function setupInteractionZone(zoneId, inputId) {
+            const zone = document.getElementById(zoneId);
+            const input = document.getElementById(inputId);
+
+            zone.addEventListener('dblclick', (e) => {
+                if (e.target.closest('.cropper-container') || e.target.closest('button')) return;
+                input.click();
+            });
+
+            zone.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                for (let index in items) {
+                    const item = items[index];
+                    if (item.kind === 'file' && item.type.startsWith('image/')) {
+                        const blob = item.getAsFile();
+                        const dataTransfer = new DataTransfer();
+                        dataTransfer.items.add(blob);
+                        input.files = dataTransfer.files;
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        break; 
+                    }
+                }
+            });
+        }
+
+        const docRatio = 3.5 / 2.2;
+        initCropper('photoInput', 'photoImage', 'photoCropperBox', 'photo', 1 / 1, 'removePhoto');
+        initCropper('signInput', 'signImage', 'signCropperBox', 'sign', 4.5 / 2, 'removeSign');
+        initCropper('docFrontInput', 'docFrontImage', 'docFrontCropperBox', 'docFront', docRatio, 'removeDocFront');
+        initCropper('docBackInput', 'docBackImage', 'docBackCropperBox', 'docBack', docRatio, 'removeDocBack');
+
+        setupInteractionZone('photoZone', 'photoInput');
+        setupInteractionZone('signZone', 'signInput');
+        setupInteractionZone('docFrontZone', 'docFrontInput');
+        setupInteractionZone('docBackZone', 'docBackInput');
+
+        setupRemoveButton('removePhoto', 'photo', 'photoCropperBox', 'photoInput', 'photoStatus');
+        setupRemoveButton('removeSign', 'sign', 'signCropperBox', 'signInput', 'signStatus');
+        setupRemoveButton('removeDocFront', 'docFront', 'docFrontCropperBox', 'docFrontInput', null);
+        setupRemoveButton('removeDocBack', 'docBack', 'docBackCropperBox', 'docBackInput', null);
+
+        async function getCompressedBase64(canvas, targetKB) {
+            let quality = 0.9;
+            let resultBase64 = canvas.toDataURL('image/jpeg', quality);
+            let sizeKB = Math.round((resultBase64.length * 3 / 4) / 1024);
+            while (sizeKB > targetKB && quality > 0.1) {
+                quality -= 0.1;
+                resultBase64 = canvas.toDataURL('image/jpeg', quality);
+                sizeKB = Math.round((resultBase64.length * 3 / 4) / 1024);
+            }
+            return { dataUrl: resultBase64, sizeKB: sizeKB };
+        }
+
+        function downloadFile(dataUrl, filename) {
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        document.getElementById('downloadPhoto').addEventListener('click', async () => {
+            if (!croppers.photo) return;
+            const canvas = croppers.photo.getCroppedCanvas({ width: 213, height: 213, fillColor: '#fff' });
+            const { dataUrl, sizeKB } = await getCompressedBase64(canvas, 48); 
+            const status = document.getElementById('photoStatus');
+            status.textContent = `Generated: 213x213px | ~${sizeKB} KB`;
+            status.classList.remove('hidden');
+            downloadFile(dataUrl, 'PAN_Photograph.jpg');
+        });
+
+        document.getElementById('downloadSign').addEventListener('click', async () => {
+            if (!croppers.sign) return;
+            const canvas = croppers.sign.getCroppedCanvas({ width: 354, height: 157, fillColor: '#fff' }); 
+            const { dataUrl, sizeKB } = await getCompressedBase64(canvas, 48);
+            const status = document.getElementById('signStatus');
+            status.textContent = `Generated: ~${sizeKB} KB`;
+            status.classList.remove('hidden');
+            downloadFile(dataUrl, 'PAN_Signature.jpg');
+        });
+
+        document.getElementById('downloadDoc').addEventListener('click', async () => {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+            let hasAddedContent = false;
+
+            const processDocImage = async (cropperType) => {
+                if (!croppers[cropperType]) return null;
+                const canvas = croppers[cropperType].getCroppedCanvas({ maxWidth: 1000, maxHeight: 1000, fillColor: '#fff' });
+                const { dataUrl } = await getCompressedBase64(canvas, 120); 
+                return dataUrl;
+            };
+
+            const frontData = await processDocImage('docFront');
+            const backData = await processDocImage('docBack');
+
+            const imgWidth = 190;
+            const imgHeight = imgWidth / docRatio; 
+
+            if (frontData) {
+                doc.addImage(frontData, 'JPEG', 10, 20, imgWidth, imgHeight); 
+                hasAddedContent = true;
+            }
+
+            if (backData) {
+                const yPos = frontData ? 20 + imgHeight + 20 : 20; 
+                doc.addImage(backData, 'JPEG', 10, yPos, imgWidth, imgHeight);
+                hasAddedContent = true;
+            }
+
+            if (hasAddedContent) {
+                doc.save('PAN_Aadhaar_Document.pdf');
+                const status = document.getElementById('docStatus');
+                status.textContent = `Single Page PDF Generated successfully!`;
+                status.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
